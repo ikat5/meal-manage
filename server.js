@@ -9,10 +9,14 @@ import { slots } from './public/model.js';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const sessionAge = 12 * 60 * 60 * 1000;
 
+class ConfigurationError extends Error {
+  constructor(message) { super(message); this.name = 'ConfigurationError'; }
+}
+
 export function getListenOptions(env = process.env) {
   const hosted = env.NODE_ENV === 'production' || env.RENDER === 'true';
   const port = Number(env.PORT || (hosted ? 10000 : 3000));
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535.');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigurationError('PORT must be an integer from 1 to 65535.');
   return { port, host: hosted ? '0.0.0.0' : env.HOST || '127.0.0.1' };
 }
 
@@ -102,7 +106,9 @@ export async function createApp(options = {}) {
   const production = process.env.NODE_ENV === 'production';
   const username = options.username ?? process.env.ADMIN_USERNAME ?? 'admin';
   const password = options.password ?? process.env.ADMIN_PASSWORD ?? (production ? '' : 'admin12345');
-  if (!username || !password || password.length > 256 || (production && password.length < 12)) throw new Error('Set an admin username and password; production requires at least 12 password characters.');
+  if (typeof username !== 'string' || !username.trim()) throw new ConfigurationError('Set ADMIN_USERNAME to a non-empty username.');
+  if (typeof password !== 'string' || !password.trim()) throw new ConfigurationError('Set ADMIN_PASSWORD before starting the app.');
+  if (password.length > 256 || (production && password.length < 8)) throw new ConfigurationError('ADMIN_PASSWORD must contain 8–256 characters in production (up to 256 locally).');
   // Open HTTP independently of Atlas so Render can detect the listening port.
   let store = options.store;
   const ready = store ? Promise.resolve(store) : Promise.resolve().then(() => (options.connectStore ?? MongoStore.connect)(options.mongo));
@@ -238,7 +244,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.once('SIGTERM', shutdown);
     process.once('SIGINT', shutdown);
   } catch (error) {
-    console.error('Startup failed. Check MongoDB Atlas access, MONGODB_URI, MONGODB_DB, and admin credentials. Error type:', error.name || 'Error');
+    if (error instanceof ConfigurationError) console.error(`Startup failed: ${error.message}`);
+    else console.error('Startup failed. Check MongoDB Atlas access and service configuration. Error type:', error.name || 'Error');
     process.exitCode = 1;
   }
 }

@@ -14,7 +14,7 @@ Before starting, set these private values in `.env`:
 
 - `MONGODB_URI`: the complete Atlas connection string, including database credentials.
 - `MONGODB_DB`: `meal_manage` by default; use a dedicated database for this app.
-- `ADMIN_USERNAME` and `ADMIN_PASSWORD`: login credentials. Use at least 12 password characters for production.
+- `ADMIN_USERNAME` and `ADMIN_PASSWORD`: login credentials. Production passwords must contain 8–256 characters; choose a unique password.
 - `MESS_NAME`: the name shown in the sidebar.
 
 Open http://127.0.0.1:3000 and log in with the credentials from `.env`. A private `.env` may already be configured in the original workspace; keep it private and do not overwrite it when copying the example. No credentials are bundled with the source or exposed to the browser.
@@ -27,7 +27,7 @@ The repository includes [render.yaml](render.yaml) for a **free Node web service
 
 1. Push this repository to your GitHub account and connect that repository to Render.
 2. In Render, create a **Blueprint** from the repository. It reads `render.yaml`. Choose the free instance if prompted.
-3. Supply `MONGODB_URI` from your private Atlas environment file and choose `ADMIN_PASSWORD` (12+ characters). The username defaults to `admin`; change `MESS_NAME` as desired.
+3. Supply `MONGODB_URI` from your private Atlas environment file and choose `ADMIN_PASSWORD` (8–256 characters). The username defaults to `admin`; change `MESS_NAME` as desired.
 4. In Atlas Network Access, allow the outbound IP ranges shown for the Render service. The Atlas database user needs read/write access to the configured database. Keep the database name consistent with your import and local configuration.
 5. Deploy manually. Wait for `/healthz` to return `{"status":"ok"}` and open the Render service URL.
 
@@ -46,6 +46,8 @@ For a manually configured **Web Service** instead of a Blueprint, use:
 HTTP starts while Atlas connects, allowing Render to detect the port immediately. `/healthz` returns `503` until Atlas initialization completes, then checks database connectivity before returning `200`. Data requests return `503` while initialization is pending or failed. An initial connection failure is logged separately; correct the database settings and restart the service. Production startup rejects missing or short passwords. HTTPS cookies are enabled in the Blueprint. Data lives in Atlas, so Render restarts do not erase records. Sessions are process-local and restarting/redeploying signs users out; this configuration uses one instance. Render free services may sleep when idle; availability and limits follow Render's current free-tier terms.
 
 If Render reports **port scan timeout / no open ports**, confirm the service uses `npm start` as its start command (not the build/check command) and deploy the latest commit. Look for `Meal Manage is listening on 0.0.0.0:<PORT>` in the logs. A `Database initialization failed` message or an HTTP `503` health check is a separate Atlas/configuration issue; an open port alone does not mean the database is ready. See [Render port binding](https://render.com/docs/web-services#port-binding) and [health checks](https://render.com/docs/health-checks).
+
+For an immediate startup exit, read the `Startup failed:` message: invalid `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `PORT` settings name the exact requirement without logging their values. Update that variable in Render's Environment page, save, and deploy. Set the website login password as `ADMIN_PASSWORD`; MongoDB credentials belong in `MONGODB_URI`.
 
 Configuration references: [Render Blueprint specification](https://render.com/docs/blueprint-spec), [Render web services](https://render.com/docs/web-services), [Render free instances](https://render.com/docs/free).
 

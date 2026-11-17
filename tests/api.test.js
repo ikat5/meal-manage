@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createApp, getListenOptions } from '../server.js';
 import { MemoryStore } from './support/memory-store.js';
 import { approximateMealRate, calculateBalances } from '../public/model.js';
@@ -48,6 +50,37 @@ test('authentication protects records, rejects bad passwords, and logs out', asy
   assert.equal((await request('/api/data')).response.status, 200);
   await request('/api/logout', {});
   assert.equal((await request('/api/data')).response.status, 401);
+});
+
+test('production accepts a configured nine-character password without using default credentials', async (t) => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'production';
+  t.after(() => { if (previous === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous; });
+  const password = 'p'.repeat(9);
+  const { request } = await start(t, undefined, { username: 'operator', password });
+  assert.equal((await request('/api/login', { username: 'admin', password: 'admin12345' })).response.status, 401);
+  const login = await request('/api/login', { username: 'operator', password });
+  assert.equal(login.response.status, 200);
+  assert.equal((await request('/api/data')).response.status, 200);
+  for (const invalid of ['', ' '.repeat(8), 'p'.repeat(7), 'p'.repeat(257)]) {
+    await assert.rejects(createApp({ store: new MemoryStore(), username: 'operator', password: invalid }), { name: 'ConfigurationError', message: /ADMIN_PASSWORD/ });
+  }
+  await assert.rejects(createApp({ store: new MemoryStore(), username: ' ', password }), { name: 'ConfigurationError', message: /ADMIN_USERNAME/ });
+});
+
+test('invalid production credentials explain the startup failure without printing the password', (t) => {
+  const password = 'p'.repeat(7);
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('../server.js', import.meta.url))], {
+    env: { ...process.env, NODE_ENV: 'production', PORT: '10000', ADMIN_USERNAME: 'operator', ADMIN_PASSWORD: password },
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  if (['EPERM', 'EACCES'].includes(result.error?.code)) return t.skip('This environment blocks subprocess execution.');
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Startup failed: ADMIN_PASSWORD must contain 8–256 characters/);
+  assert(!result.stderr.includes(password));
+  assert(!result.stderr.includes('MongoDB Atlas'));
 });
 
 test('member, deposit, purchase and guest attendance persist with validation', async (t) => {
