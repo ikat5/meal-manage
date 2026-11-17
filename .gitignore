@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.env
+!*.example
+*.pem
+*.key
+data/*
+!data/.gitkeep
+.taste-skill/chrome*/
+.taste-skill/gate/
+.taste-skill/
+shots/
+*.bundle

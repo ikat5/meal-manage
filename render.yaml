@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: meal-manage
+    runtime: node
+    plan: free
+    region: singapore
+    numInstances: 1
+    buildCommand: npm ci --omit=dev && npm run check
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeployTrigger: "off"
+    envVars:
+      - key: NODE_VERSION
+        value: 24.21.0
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: SECURE_COOKIE
+        value: "true"
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: meal_manage
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: MESS_NAME
+        value: MessName

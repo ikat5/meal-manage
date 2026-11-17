@@ -1,0 +1,19 @@
+{
+  "name": "meal-manage",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "test": "node --test",
+    "check": "node --check server.js && node --check storage/mongo-store.js && node --check scripts/migrate-sqlite.js && node --check public/app.js && node --check public/model.js",
+    "migrate:sqlite": "node --env-file-if-exists=.env scripts/migrate-sqlite.js"
+  },
+  "dependencies": {
+    "mongodb": "7.7.0"
+  }
+}
