@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createApp } from '../server.js';
+import { createApp, getListenOptions } from '../server.js';
 import { MemoryStore } from './support/memory-store.js';
 import { approximateMealRate, calculateBalances } from '../public/model.js';
 
-async function start(t, state) {
+async function start(t, state, options = {}) {
   const store = new MemoryStore(state);
-  const server = await createApp({ store, username: 'admin', password: 'test-password' });
+  const server = await createApp({ store, username: 'admin', password: 'test-password', ...options });
   let closed = false;
   const close = async () => { if (!closed) { closed = true; await server.dispose(); } };
   t.after(close);
@@ -33,7 +33,7 @@ async function start(t, state) {
     return { response, body: response.headers.get('content-type').startsWith('application/json') ? await response.json() : null };
   };
   const login = () => request('/api/login', { username: 'admin', password: 'test-password' });
-  return { close, request, login, get cookie() { return cookie; } };
+  return { server, close, request, login, get cookie() { return cookie; } };
 }
 
 test('authentication protects records, rejects bad passwords, and logs out', async (t) => {
@@ -273,6 +273,57 @@ test('health endpoint reports database readiness without exposing data', async (
   const health = await request('/healthz');
   assert.equal(health.response.status, 200);
   assert.deepEqual(health.body, { status: 'ok' });
+});
+
+test('Render binds its assigned port on all interfaces even with local HOST settings', () => {
+  assert.deepEqual(getListenOptions({ RENDER: 'true', HOST: '127.0.0.1', PORT: '12345' }), { host: '0.0.0.0', port: 12345 });
+  assert.deepEqual(getListenOptions({ NODE_ENV: 'production', HOST: 'localhost' }), { host: '0.0.0.0', port: 10000 });
+  assert.deepEqual(getListenOptions({}), { host: '127.0.0.1', port: 3000 });
+  for (const port of ['0', '-1', '65536', '3000.5', 'invalid']) assert.throws(() => getListenOptions({ PORT: port }), /PORT/);
+});
+
+test('HTTP starts during Atlas initialization, reports unavailable, then serves persisted records', { timeout: 2000 }, async (t) => {
+  const connecting = Promise.withResolvers();
+  const store = new MemoryStore({ data: { members: [{ id: 1, name: 'Rahim', active: true }], deposits: [], groceries: [], meals: [] }, counters: {} });
+  t.after(() => connecting.resolve(store));
+  const { server, request, login } = await start(t, undefined, { store: undefined, connectStore: () => connecting.promise });
+  assert.equal((await request('/login')).response.status, 200);
+  const health = await request('/healthz');
+  assert.equal(health.response.status, 503);
+  assert.equal(health.response.headers.get('retry-after'), '5');
+  await login();
+  assert.equal((await request('/api/data')).response.status, 503);
+  assert.equal((await request('/api/members', { name: 'Karim' })).response.status, 503);
+  connecting.resolve(store);
+  await server.ready;
+  assert.equal((await request('/healthz')).response.status, 200);
+  assert.equal((await request('/api/data')).body.members[0].name, 'Rahim');
+});
+
+test('failed Atlas startup leaves HTTP responsive without exposing credentials or accepting writes', async (t) => {
+  const logged = [];
+  t.mock.method(console, 'error', (...args) => logged.push(args.join(' ')));
+  const { server, request, login, close } = await start(t, undefined, {
+    store: undefined,
+    connectStore: async () => { throw Object.assign(new Error('mongodb+srv://private-credentials@cluster/'), { name: 'MongoServerSelectionError' }); },
+  });
+  await assert.rejects(server.ready, { name: 'MongoServerSelectionError' });
+  assert.equal((await request('/healthz')).response.status, 503);
+  await login();
+  assert.equal((await request('/api/members', { name: 'Karim' })).response.status, 503);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /Database initialization failed/);
+  assert(!logged[0].includes('private-credentials'));
+  await close();
+});
+
+test('health endpoint reports an outage after startup and recovers with the database', async (t) => {
+  const store = new MemoryStore();
+  const { request } = await start(t, undefined, { store });
+  const health = t.mock.method(store, 'health', async () => { throw new Error('offline'); });
+  assert.equal((await request('/healthz')).response.status, 503);
+  health.mock.restore();
+  assert.equal((await request('/healthz')).response.status, 200);
 });
 
 test('deleted record IDs are not reused and concurrent member changes remain distinct', async (t) => {

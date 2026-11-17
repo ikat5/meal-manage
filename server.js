@@ -8,6 +8,14 @@ import { slots } from './public/model.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const sessionAge = 12 * 60 * 60 * 1000;
+
+export function getListenOptions(env = process.env) {
+  const hosted = env.NODE_ENV === 'production' || env.RENDER === 'true';
+  const port = Number(env.PORT || (hosted ? 10000 : 3000));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer from 1 to 65535.');
+  return { port, host: hosted ? '0.0.0.0' : env.HOST || '127.0.0.1' };
+}
+
 class HttpError extends Error {
   constructor(status, message, field) { super(message); this.status = status; this.field = field; }
 }
@@ -95,7 +103,12 @@ export async function createApp(options = {}) {
   const username = options.username ?? process.env.ADMIN_USERNAME ?? 'admin';
   const password = options.password ?? process.env.ADMIN_PASSWORD ?? (production ? '' : 'admin12345');
   if (!username || !password || password.length > 256 || (production && password.length < 12)) throw new Error('Set an admin username and password; production requires at least 12 password characters.');
-  const store = options.store ?? await MongoStore.connect(options.mongo);
+  // Open HTTP independently of Atlas so Render can detect the listening port.
+  let store = options.store;
+  const ready = store ? Promise.resolve(store) : Promise.resolve().then(() => (options.connectStore ?? MongoStore.connect)(options.mongo));
+  ready.then((connected) => { store = connected; }, (error) => {
+    console.error('Database initialization failed. Check Atlas network access, MONGODB_URI, and database permissions. Error type:', error.name || 'Error');
+  });
   const secureCookie = process.env.SECURE_COOKIE === 'true' || (production && process.env.SECURE_COOKIE !== 'false');
   const salt = randomBytes(16);
   const hash = scryptSync(password, salt, 64);
@@ -125,6 +138,7 @@ export async function createApp(options = {}) {
     try {
       const route = new URL(req.url, 'http://localhost').pathname;
       if (route === '/healthz' && req.method === 'GET') {
+        if (!store) { res.setHeader('Retry-After', '5'); return json(res, 503, { status: 'unavailable' }); }
         try { await store.health(); return json(res, 200, { status: 'ok' }); }
         catch { return json(res, 503, { status: 'unavailable' }); }
       }
@@ -164,6 +178,10 @@ export async function createApp(options = {}) {
           res.setHeader('Set-Cookie', `session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secureCookie ? '; Secure' : ''}`);
           return json(res, 200, { ok: true });
         }
+        if (!store) {
+          res.setHeader('Retry-After', '5');
+          throw new HttpError(503, 'Database unavailable. Try again.');
+        }
         if (route === '/api/data' && req.method === 'GET') return json(res, 200, publicData(await store.read()));
         const collectionRoute = /^\/api\/(members|deposits|groceries|meals)$/.exec(route);
         const recordRoute = /^\/api\/(members|deposits|groceries|meals)\/(\d+)$/.exec(route);
@@ -195,18 +213,24 @@ export async function createApp(options = {}) {
     }
   });
   let disposed;
-  server.dispose = () => disposed ||= Promise.resolve().then(() => store.close());
+  server.ready = ready;
+  server.dispose = () => disposed ||= ready.then((connected) => connected.close(), () => {});
   server.once('close', () => { void server.dispose().catch(() => console.error('Database shutdown failed.')); });
   return server;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const production = process.env.NODE_ENV === 'production';
-    const port = Number(process.env.PORT || (production ? 10000 : 3000));
-    const host = process.env.HOST || (production ? '0.0.0.0' : '127.0.0.1');
+    const { port, host } = getListenOptions();
     const server = await createApp();
-    server.listen(port, host, () => console.log(`Meal Manage is running on ${host}:${port}`));
+    server.once('error', (error) => {
+      console.error('HTTP listener failed. Check PORT and whether the address is available. Error type:', error.code || error.name || 'Error');
+      void server.dispose().catch(() => console.error('Database shutdown failed.')).finally(() => { process.exitCode = 1; });
+    });
+    server.listen(port, host, () => {
+      console.log(`Meal Manage is listening on ${host}:${port}`);
+      void server.ready.then(() => console.log('MongoDB Atlas is ready.'), () => {});
+    });
     const shutdown = () => {
       server.close(() => { void server.dispose().then(() => process.exit(0)); });
       setTimeout(() => process.exit(1), 10000).unref();

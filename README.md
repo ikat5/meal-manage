@@ -19,7 +19,7 @@ Before starting, set these private values in `.env`:
 
 Open http://127.0.0.1:3000 and log in with the credentials from `.env`. A private `.env` may already be configured in the original workspace; keep it private and do not overwrite it when copying the example. No credentials are bundled with the source or exposed to the browser.
 
-`npm run dev` restarts the server after server/module edits. Refresh the browser for frontend changes. `HOST` defaults to `127.0.0.1` locally and `0.0.0.0` in production; the server uses Render's `PORT` environment variable.
+`npm run dev` restarts the server after server/module edits. Refresh the browser for frontend changes. `HOST` defaults to `127.0.0.1` locally. Production and Render always bind to `0.0.0.0`, even if a copied local `HOST` setting specifies localhost; the server uses Render's `PORT` environment variable.
 
 ## Deploy manually on Render's free tier
 
@@ -43,7 +43,9 @@ For a manually configured **Web Service** instead of a Blueprint, use:
 | Node version | `24.21.0` |
 | Environment | `NODE_ENV=production`, `HOST=0.0.0.0`, `SECURE_COOKIE=true`, plus the database/admin settings above |
 
-The startup connection and health check verify Atlas availability. Production startup rejects missing or short passwords. HTTPS cookies are enabled in the Blueprint. Data lives in Atlas, so Render restarts do not erase records. Sessions are process-local and restarting/redeploying signs users out; this configuration uses one instance. Render free services may sleep when idle; availability and limits follow Render's current free-tier terms.
+HTTP starts while Atlas connects, allowing Render to detect the port immediately. `/healthz` returns `503` until Atlas initialization completes, then checks database connectivity before returning `200`. Data requests return `503` while initialization is pending or failed. An initial connection failure is logged separately; correct the database settings and restart the service. Production startup rejects missing or short passwords. HTTPS cookies are enabled in the Blueprint. Data lives in Atlas, so Render restarts do not erase records. Sessions are process-local and restarting/redeploying signs users out; this configuration uses one instance. Render free services may sleep when idle; availability and limits follow Render's current free-tier terms.
+
+If Render reports **port scan timeout / no open ports**, confirm the service uses `npm start` as its start command (not the build/check command) and deploy the latest commit. Look for `Meal Manage is listening on 0.0.0.0:<PORT>` in the logs. A `Database initialization failed` message or an HTTP `503` health check is a separate Atlas/configuration issue; an open port alone does not mean the database is ready. See [Render port binding](https://render.com/docs/web-services#port-binding) and [health checks](https://render.com/docs/health-checks).
 
 Configuration references: [Render Blueprint specification](https://render.com/docs/blueprint-spec), [Render web services](https://render.com/docs/web-services), [Render free instances](https://render.com/docs/free).
 
